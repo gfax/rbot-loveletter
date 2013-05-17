@@ -92,7 +92,6 @@ class LoveLetter
       @discard = []
       @hand = []
       @out = false
-      @time = nil # calculate time spent playing
     end
 
     def to_s
@@ -101,19 +100,19 @@ class LoveLetter
   end
 
 
-  def initialize(plugin, channel, user)
+  def initialize(plugin, channel, user, rounds)
     @bot = plugin.bot
     @channel = channel
     @plugin = plugin
     @registry = plugin.registry
     @deck = []        # card stock
-    @discard = []     # card reserve for round end
     @dropped = []     # players booted from the game
     @join_timer = nil # timer for countdown
     @manager = nil    # player that started the game
     @player = []      # players currently in the game
+    @reserve = []     # card reserve for round end
+    @rounds = rounds  # total rounds in the game
     @started = nil    # time the game started
-    create_deck
     add_player(user)
   end
 
@@ -137,22 +136,25 @@ class LoveLetter
       @bot.timer.reschedule(@join_timer, 10)
     elsif players.size > 1
       countdown = @bot.config['loveletter.countdown']
-      @join_timer = @bot.timer.add_once(countdown) { start_game }
+      @join_timer = @bot.timer.add_once(countdown) { do_round }
       say "Game will start in #{countdown} seconds."
     end
   end
 
   def do_round
+    @started = Time.now if not started
     @players.shuffle!
+    # Reset deck:
     @deck.clear
-    @discard.clear
+    @reserve.clear
     Cards.each_pair do |k, v|
       v[:quantity].times { @deck << Card.new(k) }
     end
+    players.each { |p| p.hand << @deck.pop }
   end
 
-  def do_turn
-    @players << @players.shift
+  def do_turn(hold_place=false)
+    @players << @players.shift unless hold_place
     player = players.first
     while player.hand.size < 2
       if deck.empty? and not player.hand.empty?
@@ -161,10 +163,11 @@ class LoveLetter
       elsif deck.size > 0
         player.hand << @deck.pop
       else
-        player.hand << @discard.pop
+        player.hand << @reserve.pop
       end
     end
     say "#{player}, pick a card to discard."
+    show_hand(player)
   end
 
   def drop_player(dropper, a)
@@ -199,12 +202,25 @@ class LoveLetter
       say "#{player} has been removed from the game. #{Title} stopped."
       @plugin.remove_game(channel)
     else
-      do_turn if player == players.first
+      do_turn(true) if player == players.first
     end
   end
 
   def elapsed_time
     return Utils.secs_to_string(Time.now-started)
+  end
+
+  def end_game
+    # Time spent playing the game.
+    @started = Time.now.to_i - started.to_i
+    say "That's all, folks."
+    #update_channel_stats
+    #players.each { |p| update_user_stats(p, 0) }
+    @plugin.remove_game(channel)
+  end
+
+  def end_round
+    
   end
 
   def get_player(user, source=nil)
@@ -231,8 +247,7 @@ class LoveLetter
   end
 
   def notify(player, msg, opts={})
-    # hey maybe someone will add bot AI...
-    @bot.notice player.user, msg, opts unless player.user == @bot.nick
+    @bot.notice player.user, msg, opts
   end
 
   def replace_player(replacer, a)
@@ -268,8 +283,6 @@ class LoveLetter
     else
       say "#{player} was replaced by #{Bold + new_player.nick + Bold}!"
       player.user = new_player
-      # Reset player's accumulated time playing this game.
-      player.time = Time.now
       say "#{player} is now game manager." if player == manager
     end
   end
@@ -279,10 +292,12 @@ class LoveLetter
     @bot.say who, msg, opts
   end
 
-  def start_game
-    @started = Time.now
-    players.each { |p| p.time = started }
-    do_round
+  def show_hand(p_array=players)
+    p_array = [ p_array ] unless p_array.class == Array
+    p_array.each do |p|
+      next if p.hand.size < 1
+      notify p, "Cards: 1.) #{p.hand[0]}, 2.) #{p.hand[1]}"
+    end
   end
 
   def transfer_management(player, a)
@@ -307,6 +322,40 @@ class LoveLetter
     say "#{new_manager} is now game manager."
   end
 
+  def update_channel_stats(stats)
+    r = @registry[:chan] || {}
+    c = channel.name.downcase
+    rounds = 0
+    players.each { |p| rounds += p.rounds }
+    r[c] = {} if r[c].nil?
+    r[c][:games] = r[c][:games].to_i + 1
+    r[c][:longest] = started if r[c][:longest].nil?
+    r[c][:longest] = started if started > r[c][:longest]
+    # display-name for proper caps
+    r[c][:name] = channel.name
+    r[c][:rounds] = r[c][:rounds].to_i + rounds
+    r[c][:time] = r[c][:time].to_i + started
+    @registry[:chan] = r
+  end
+
+  def update_user_stats(player, win)
+    @registry[:user] = {} if @registry[:user].nil?
+    c, n = channel.name.downcase, player.user.nick.downcase
+    h1 = @registry[:chan][c][n] || {}
+    h2 = @registry[:user][n] || {}
+    [ h1, h2 ].each do |e|
+      e[:games] = e[:games].to_i + 1
+      # Get player's nick in proper caps.
+      e[:nick] = player.user.to_s
+      e[:rounds] = e[:rounds].to_i + player.rounds
+      e[:wins] = e[:wins].to_i + win
+    end
+    r1 = @registry[:chan]
+    r2 = @registry[:user]
+    r1[c][n], r2[n] = h1, h2
+    @registry[:chan], @registry[:user] = r1, r2
+  end
+
 end
 
 
@@ -317,7 +366,6 @@ class LoveLetterPlugin < Plugin
   Config.register Config::IntegerValue.new 'loveletter.countdown',
     :default => 10, :validate => Proc.new{|v| v > 0},
     :desc => 'Number of seconds before starting a game of Love Letter.'
-
 
   attr :games
 
@@ -393,17 +441,18 @@ class LoveLetterPlugin < Plugin
     when /rule/, /manual/
       "http://www.alderac.com/tempest/files/2012/09/Love_Letter_Rules_Final.pdf"
     when /stat/, /scor/
-      "#{p}#{plugin} stats <channel|user> -- displays the stats and scores " +
-      "for a channel or user. If no channel or user is specified, this " +
-      "command will show you your own stats.\n#{p}#{plugin} stats <channel> " +
-      "<user> -- displays user stats for a specific channel\n#{p}#{plugin} " +
-      "top <num> <channel> -- shows the top <num> scores for a given channel"
+      "'#{p}#{plugin} stats <channel|user>' displays the stats " +
+      "and scores for a channel or user. If no channel or user " +
+      "is specified, this command will show you your own stats.\n" +
+      "'#{p}#{plugin} stats <channel> <user>' displays user " +
+      "stats for a specific channel\n'#{p}#{plugin} top <num> " +
+      "<channel>' shows the top <num> scores for a given channel"
     when /cancel/, /end/, /halt/, /stop/
-      "#{p}#{plugin} stop -- Stops the current game; Only game " +
+      "'#{p}#{plugin} stop' stops the current game; Only game " +
       'managers and bot owners can stop a game in progress.'
     when ''
-      "#{Title}: commands, manual, object, stats, stop"
-    else
+      "#{Title}: commands, manual, object, stats, stop -- " +
+      "'#{p}#{plugin} <rounds>' to create a game"
     end
   end
 
@@ -452,16 +501,22 @@ p = LoveLetterPlugin.new
 
 [ 'cancel', 'end', 'halt', 'stop' ].each do |x|
   p.map "love #{x}",
-    :private => false, :action => :stop_game
+    :action => :stop_game,
+    :private => false
 end
-p.map 'love reset',
-  :action => :reset_everything
+p.map 'love reset everything',
+  :action => :reset_everything,
+  :auth_path => 'reset'
 p.map 'love stat[s] *a',
   :action => :show_stats
 p.map 'love top [:n]',
-  :private => false, :action => :show_stats,
+  :action => :show_stats
   :defaults => { :a => false, :n => 5 }
-p.map 'love',
-  :private => false, :action => :create_game
+p.map 'love [:rounds]',
+  :action => :create_game,
+  :defaults => { :rounds => 1 },
+  :private => false,
+  :requirements => { :rounds => /^\d+$/ }
 
 p.default_auth('*', true)
+p.default_auth('reset', false)
