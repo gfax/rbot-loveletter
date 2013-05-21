@@ -102,14 +102,12 @@ class LoveLetter
       @rounds = 0
     end
 
-    def has?(requests)
-      return false if requests.nil?
-      [*requests].each do |e|
-        if e.is_a? Card
-          hand.each { |c| return true if e == c }
-        elsif e.is_a? Symbol
-          hand.each { |c| return true if e == c.name }
-        end
+    def has?(card)
+      return false if card.nil?
+      if card.is_a? Symbol
+        hand.each { |e| return true if card == e.name }
+      elsif card.is_a? Card
+        hand.each { |e| return true if card.name == e.name }
       end
       return false
     end
@@ -184,16 +182,6 @@ class LoveLetter
     end
   end
 
-  def do_king(player, opponent)
-    if opponent.nil?
-      notify player, 'Specify another player.'
-      return false
-    end
-    say "#{player} swaps hands with #{opponent}."
-    player.hand, opponent.hand = opponent.hand, player.hand
-    return true
-  end
-
   def do_discard(player, card, opponent, guard_guess)
     if card.nil?
       notify player, "Specify a card name or number."
@@ -254,6 +242,17 @@ class LoveLetter
     end
     say "#{player} suspects #{opponent} has #{card.name.to_s.capitalize}..."
     oust_player(opponent) if opponent.has?(card)
+    return true
+  end
+
+  def do_king(player, opponent)
+    if opponent.nil?
+      notify player, 'Specify another player.'
+      return false
+    end
+    say "#{player} swaps hands with #{opponent}."
+    player.hand, opponent.hand = opponent.hand, player.hand
+    show_hand([player, opponent])
     return true
   end
 
@@ -411,24 +410,24 @@ class LoveLetter
   end
 
   def get_card(card)
-    #case card
-    #when Array
-    #  ret = nil
-    #  card.each { |e| ret = get_card(e) if ret.nil? }
-    #  return ret
-    #when Card
-    #  return card
-    #when NilClass
-    #  return nil
-    #when String
+    case card
+    when Array
+      ret = nil
+      card.each { |e| ret = get_card(e) if ret.nil? }
+      return ret
+    when Card
+      return card
+    when NilClass
+      return nil
+    when String
       [',', '.', '!', '?'].each { |e| card.gsub!(e, '') }
       Cards.each_pair do |k,v|
         return Card.new(k) if card =~ v[:keyword]
       end
-    #else
-    #  get_card(card.to_s)
-    #end
-    #return nil
+    else
+      get_card(card.to_s)
+    end
+    return nil
   end
 
   def get_player(user, source='')
@@ -467,9 +466,6 @@ class LoveLetter
   def processor(player, a)
     return unless player == players.first
     return if player.moved or a.empty?
-    say get_card("princess")
-    say get_card("prince")
-    say get_card("guard")
     player.moved = true
     card = guard_guess = opponent = nil
     a.each do |e|
@@ -790,6 +786,10 @@ class LoveLetterPlugin < Plugin
     when /^transfer( |\z)/
       g.transfer_management(player, a)
     end
+  end
+
+  def do_test(m, params)
+    m.reply LoveLetter.get_card("baron").class.to_s
   end
 
   # Called from within the game.
