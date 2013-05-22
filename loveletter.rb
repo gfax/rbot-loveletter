@@ -178,7 +178,7 @@ class LoveLetter
     if player.hand.first.value > opponent.hand.first.value
       oust_player(opponent)
     elsif player.hand.first.value == opponent.hand.first.value
-      "It's a draw."
+      say "It's a draw."
     else
       oust_player(player)
     end
@@ -193,7 +193,7 @@ class LoveLetter
       notify player, "Specify one of your hand cards."
       return false
     elsif player.has?(:king) or player.has?(:prince)
-      if player.has?(:countess)
+      if player.has?(:countess) and card.name != :countess
         notify player, 'You must discard the Countess.'
         return false
       end
@@ -407,6 +407,7 @@ class LoveLetter
   end
 
   def end_game
+    players.first.moved = true
     # Time spent playing the game.
     @started = Time.now.to_i - started.to_i
     a = []
@@ -414,13 +415,15 @@ class LoveLetter
     winners.each { |p| a << "#{p} - #{p.rounds}"  }
     say 'Game over. Rounds won: ' + a.join(', ')
     winners.reject! { |p| p.rounds < winners.first.rounds }
+    update_channel_stats
     if winners.size > 1
       say Utils.comma_list(winners) + ' have won equal affection!'
+      winners.each { |p| update_user_stats(p, 1) }
     else
       say "#{winners.first} has won the most affection!"
+      update_user_stats(winners.first, 1)
     end
-    #update_channel_stats
-    #players.each { |p| update_user_stats(p, 0) }
+    players.each { |p| update_user_stats(p, 0) unless winners.include?(p) }
     @plugin.remove_game(channel)
   end
 
@@ -596,7 +599,7 @@ class LoveLetter
 
   def show_turn
     return unless started
-    a, player= [], players.first
+    a, player = [], players.first
     string = "It's #{player}'s turn."
     players.each { |p| a << "#{p.user} - #{p.discard}" if p.discard }
     string << ' -- Discard: ' + a.join(', ') if a.size > 0
@@ -625,13 +628,11 @@ class LoveLetter
     say "#{new_manager} is now game manager."
   end
 
-  def update_channel_stats(stats)
+  def update_channel_stats
     r = @registry[:chan] || {}
     c = channel.name.downcase
     r[c] = {} if r[c].nil?
     r[c][:games] = r[c][:games].to_i + 1
-    r[c][:longest] = started if r[c][:longest].nil?
-    r[c][:longest] = started if started > r[c][:longest]
     # display-name for proper caps
     r[c][:name] = channel.name
     r[c][:rounds] = r[c][:rounds].to_i + rounds.total
@@ -648,9 +649,9 @@ class LoveLetter
       e[:games] = e[:games].to_i + 1
       # Get player's nick in proper caps.
       e[:nick] = player.user.to_s
-      e[:rounds] = e[:rounds].to_i + player.rounds
+      e[:score] = e[:score].to_i + player.rounds
       # bonus points for winning
-      e[:rounds] += (rounds.total * win)
+      e[:score] += (rounds.total * win)
       e[:wins] = e[:wins].to_i + win
     end
     r1 = @registry[:chan]
@@ -678,6 +679,7 @@ class LoveLetterPlugin < Plugin
   end
 
   def help(plugin, topic='')
+    p = @bot.config['core.address_prefix'].first
     case topic.downcase
     when /princess/
       "#{Bold}Princess Annette #{Bold}- If you discard the " +
@@ -732,24 +734,24 @@ class LoveLetterPlugin < Plugin
       "Type 'drop me' to leave the game in progress, or " +
       "'drop <another player>' if you are the game manager."
     when /card/
-      'There are 16 cards total in the deck: Princess (1), ' +
-      'Countess (1), King (1), Prince (2), Handmaid (2), ' +
-      "Baron (2), Priest (2), Guard (5). Use '#{p}#{plugin} " +
-      "help <card>' for card-specific information, or (simply use " +
-      "'help card' or 'help <card name>' in game for a quick reference)."
+      'There are 16 cards total in the deck: Princess (1), Countess ' +
+      '(1), King (1), Prince (2), Handmaid (2), Baron (2), Priest ' +
+      "(2), Guard (5). Use '#{p}help #{plugin} <card>' for " +
+      "card-specific information, (or simply use 'help card'," +
+      "or 'help <card name>' in game for a quick reference)."
     when /command/
-      "In-game commands 'p <card name or number>' to pick/play " +
-      "a card, 'p <victim>' to pick a play you wish to play a " +
-      "card against (e.g.: p guard; p Frank has the baron!; or " +
-      "p guard frank baron for short;), 'help <card name>' for " +
-      "card info or preferably 'help <card #>' as to not give " +
-      "away the card in your hand, 'drop me' to leave a game in " +
-      "progress, 'replace [me with] user' to have another player " +
-      "take your spot in the game. See '#{p}#{plugin} manage' " +
-      "for commands specific to the game manager."
+      "In-game commands: 'p <card name or number>' to pick/play " +
+      "a card, 'p <victim>' to pick a player you wish to play a " +
+      "card against (e.g.: 'p guard', 'p Frank has the baron!', " +
+      "or 'p guard fr baron' for short), 'help <card name>' for " +
+      "quick card info, or preferably 'help <card #>' as to not " +
+      "give away the card in your hand, 'drop me' to leave a game " +
+      "in progress, 'replace [me with] user' to have another " +
+      "player take your spot in the game.\nSee '#{p}help #{plugin} " +
+      "manage' for commands specific to the game manager."
     when /manage/, /transfer/, /xfer/
-      'The player that starts the game is the game manager. ' +
-      'Game managers may stop the game at any time, or transfer ownership ' +
+      'The player that starts the game is the game manager. Game ' +
+      'managers may stop the game at any time, or transfer ownership ' +
       "by typing 'transfer [game to] <player>'. Managers may replace " +
       'themselves as well as other players in the game by typing ' +
       "'replace [me with] <user> / replace <player> [with] <nick>'"
@@ -771,18 +773,17 @@ class LoveLetterPlugin < Plugin
       'The winner over all rounds receives a bonus relative ' +
       'to the total number of rounds played.'
     when /stat/, /scor/
-      "'#{p}#{plugin} stats <channel|user>' displays the stats " +
-      'and scores for a channel or user. If no channel or user ' +
-      "is specified, this command will show you your own stats.\n" +
-      "'#{p}#{plugin} stats <channel> <user>' displays user " +
-      "stats for a specific channel\n'#{p}#{plugin} top <num> " +
-      "<channel>' shows the top <num> scores for a given channel"
+      "'#{p}love stats <channel/user>' displays the stats and score for " +
+      'a channel or user. If no channel or user is specified, this ' +
+      "command will show you your own stats.\n'#{p}love stats <channel> " +
+      "<user>' displays a user's stats for a specific channel.\n'#{p}love " +
+      "top <num> <channel>' shows the top <num> scores for a given channel."
     when /cancel/, /end/, /halt/, /stop/
-      "'#{p}#{plugin} stop' stops the current game; Only game " +
+      "'#{p}love stop' stops the current game; Only game " +
       'managers and bot owners can stop a game in progress.'
     when ''
       "#{Title}: cards, commands, manual, object, scoring, stats, stop -- " +
-      "'#{p}#{plugin} <rounds>' to create a game"
+      "'#{p}love <rounds>' to create a game"
     end
   end
 
@@ -837,6 +838,104 @@ class LoveLetterPlugin < Plugin
     end
   end
 
+  def show_stats(m, params)
+    if @registry[:chan].nil?
+      m.reply "No #{Title} stats recorded yet."
+      return
+    end
+    if params[:a] == false
+      if @registry[:chan][m.channel.name.downcase]
+        show_stats_chan(m, m.channel.name.downcase, params[:n].to_i)
+      else
+        m.reply "No one has played #{Title} in #{m.channel.name}."
+      end
+      return
+    end
+    a, chan, user, n = params[:a], nil, nil, 0
+    if a.empty?
+      user = m.source.nick.downcase
+    else
+      a.each do |e|
+        chan = e.downcase if @registry[:chan][e.downcase]
+        user = e.downcase if @registry[:user][e.downcase]
+        n = e.to_i if e.to_i > n
+      end
+    end
+    if chan.nil? and user.nil?
+      # Check for missing # symbol.
+      a.each { |e| chan = "##{chan}" if @registry[:chan]["##{chan}"] }
+      if chan
+        show_stats_chan(m, chan, n)
+      else
+        m.reply "No stats for #{a.join(' or ')}."
+      end
+    elsif user
+      show_stats_user(m, user, chan)
+    elsif chan
+      show_stats_chan(m, chan, n)
+    end
+  end
+
+  def show_stats_chan(m, chan, n)
+    c = @registry[:chan][chan]
+    if n.zero?
+      str = "#{Bold}#{c[:name]}:#{Bold} #{c[:games]} games played, "
+      str << "rounds played: #{c[:rounds]} "
+      i = c[:games] > 1
+      str << "(#{c[:rounds]/c[:games]} rounds average per game), " if i
+      str << "time accumulated: #{Utils.secs_to_string(c[:time])} "
+      str << "(#{Utils.secs_to_string(c[:time]/c[:games])} average per game)." if i
+      @bot.say m.replyto, str
+      return
+    end
+    n = 5 unless n.between?(1,20)
+    tops = {}
+    c.each_pair do |k, v|
+      next unless k.is_a? String
+      tops[v[:score]] = k
+    end
+    n = tops.size if n > tops.size
+    @bot.say m.replyto, "#{c[:name]}'s top #{n} players:"
+    i = 1
+    if n.between?(1,8)
+      tops.sort.reverse.each do |e|
+        str = "#{Bold}#{i}.) #{c[e[1]][:nick]}#{Bold} - "
+        str << "#{e.first} points, "
+        str << "#{c[e[1]][:wins]}/#{c[e[1]][:games]} wins"
+        @bot.say m.replyto, str
+        i += 1
+      end
+    else
+      str = ''
+      tops.sort.reverse.each do |e|
+        str << "#{Bold}#{i}.) #{c[e[1]][:nick]}#{Bold} - "
+        str << "#{e.first} pts."
+        i += 1
+        if i > n
+          break
+        else
+          str << ', '
+        end
+      end
+      @bot.say m.replyto, str
+    end
+  end
+
+  def show_stats_user(m, user, chan=nil)
+    if chan
+      u = @registry[:chan][chan][user]
+      chan = @registry[:chan][chan][:name]
+      str = "#{Bold}#{u[:nick]}#{Bold} (in #{chan}) -- "
+    else
+      u = @registry[:user][user]
+      str = "#{Bold}#{u[:nick]}#{Bold} -- "
+    end
+    str << "score: #{u[:score]}, "
+    str << "wins: #{u[:wins]}, "
+    str << "games played: #{u[:games]}"
+    @bot.say m.replyto, str
+  end
+
   # Called from within the game.
   def remove_game(channel)
     if t = @games[channel].join_timer
@@ -877,11 +976,12 @@ p.map 'love reset everything',
   :action => :reset_everything,
   :auth_path => 'reset'
 p.map 'love stat[s] *a',
-  :action => :show_stats
+  :action => :show_stats,
+  :defaults => {:a => [] }
 p.map 'love top [:n]',
   :action => :show_stats,
   :defaults => { :a => false, :n => 5 }
-p.map 'love [:rounds]',
+p.map 'love [rounds] [:rounds]',
   :action => :create_game,
   :defaults => { :rounds => 1 },
   :private => false,
