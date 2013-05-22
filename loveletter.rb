@@ -4,7 +4,7 @@
 # Author:: Jay Thomas <degradinglight@gmail.com>
 # Copyright:: (C) 2013 gfax
 # License:: GPL
-# Version:: 2013-05-21
+# Version:: 2013-05-22
 #
 
 class LoveLetter
@@ -59,7 +59,7 @@ class LoveLetter
       :value => 7,
       :quantity => 1,
       :keyword => /count/,
-      :text => 'If you have this card and the King or Princess ' +
+      :text => 'If you have this card and the King or Prince ' +
                'in your hand, you must discard this card.'
     },
     :princess => {
@@ -82,7 +82,7 @@ class LoveLetter
 
     def to_s
       Irc.color(:red) + '[' + NormalText +
-      '(' + value.to_s + ') ' + name.to_s.capitalize +
+      name.to_s.capitalize + ' (' + value.to_s + ')' +
       Irc.color(:red) + ']' + NormalText
     end
 
@@ -174,12 +174,15 @@ class LoveLetter
       notify player, 'Specify another player.'
       return false
     end
-    string = "#{player} compares hands with #{opponent}..."
+    say "#{player} compares hands with #{opponent}..."
     if player.hand.first.value > opponent.hand.first.value
       oust_player(opponent)
+    elsif player.hand.first.value == opponent.hand.first.value
+      "It's a draw."
     else
       oust_player(player)
     end
+    return true
   end
 
   def do_discard(player, card, opponent, guard_guess)
@@ -189,36 +192,48 @@ class LoveLetter
     elsif not player.has?(card)
       notify player, "Specify one of your hand cards."
       return false
+    elsif player.has?(:king) or player.has?(:prince)
+      if player.has?(:countess)
+        notify player, 'You must discard the Countess.'
+        return false
+      end
     end
     player.discard = card
-    player.hand.delete(card)
-    string = "#{player} plays #{card}"
+    player.hand.delete_at(player.hand.index { |e| e.name == card.name })
+    say "#{player} plays #{card}."
     # If all other players played Handmaid,
     # the card may be discarded to no effect.
     handmaids = true
     players.each do |p|
       next if p == player
       handmaids = false if p.discard.nil? or p.discard.name != :handmaid
+      break if handmaids == false
     end
     case card.name
     when :countess
-      say string + '.'
       return true
     when :guard
-      if opponent and guard_guess
-        return do_guard(player, opponent, guard_guess) unless handmaids
+      if guard_guess and not handmaids
+        return do_guard(player, opponent, guard_guess)
+      elsif not handmaids
+        say 'Guess a card.'
       end
     when :handmaid
-      say string + " and is now immune until next turn."
+      say "#{player} is immune until next turn."
       return true
+    when :prince
+      return do_prince(player, opponent)
     when :princess
-      say string + '!'
       oust_player(player)
       return true
     else
-      if handmaids == false or card.name == :prince
-        say string + '.'
-        return self.send("do_#{card.name}", player, opponent) if opponent
+      if handmaids == false
+        opponent = players.last if players.size == 2
+        if opponent
+          return self.send("do_#{card.name}", player, opponent)
+        else
+          say "Pick a player, #{player}."
+        end
       end
     end
     if handmaids
@@ -230,18 +245,22 @@ class LoveLetter
   end
 
   def do_guard(player, opponent, guard_guess)
+    opponent = players.last if players.size == 2
     if guard_guess.nil?
       notify player, "Name a card you think #{opponent.user} has."
+      return false
+    elsif guard_guess.name == :guard
       return false
     elsif opponent.nil? or opponent == player
       notify player, 'Specify a target player.'
       return false
-    elsif opponent.discard.name == :handmaid
+    elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
       return false
     end
-    say "#{player} suspects #{opponent} has #{card.name.to_s.capitalize}..."
-    oust_player(opponent) if opponent.has?(card)
+    say "#{player} suspects #{opponent} has the " +
+        guard_guess.name.to_s.capitalize + '...'
+    oust_player(opponent) if opponent.has?(guard_guess)
     return true
   end
 
@@ -266,10 +285,7 @@ class LoveLetter
   end
 
   def do_prince(player, opponent)
-    if player.has?(:countess)
-      notify player, 'You must discard the Countess.'
-      return false
-    elsif opponent.nil?
+    if opponent.nil?
       opponent = player
     elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
@@ -279,8 +295,12 @@ class LoveLetter
       opponent.discard = opponent.hand.first
     end
     say "#{opponent} discards #{opponent.hand.first}."
-    opponent.hand.delete_at(0)
-    if deck.size > 0 then opponent.hand << @deck.pop else opponent.hand << @reserve.pop end
+    opponent.hand.clear
+    if deck.size > 0
+      opponent.hand << @deck.pop
+    else
+      opponent.hand << @reserve.pop
+    end
     return true
   end
 
@@ -316,7 +336,7 @@ class LoveLetter
   def do_turn(hold_place=false)
     in_game = 0
     players.each { |p| in_game += 1 unless p.out }
-    if in_game < 2
+    if in_game < 2 or deck.empty?
       end_round
       return
     end
@@ -339,6 +359,9 @@ class LoveLetter
       else
         player.hand << @reserve.pop
       end
+    end
+    if deck.size == 1
+      say "#{Irc.color(:red)}One card left in the deck.#{NormalText}"
     end
     say "#{player}, pick a card to discard."
     show_hand(player)
@@ -386,7 +409,16 @@ class LoveLetter
   def end_game
     # Time spent playing the game.
     @started = Time.now.to_i - started.to_i
-    say "That's all, folks."
+    a = []
+    winners = players.sort { |x, y| y.rounds <=> x.rounds }
+    winners.each { |p| a << "#{p} - #{p.rounds}"  }
+    say 'Game over. Rounds won: ' + a.join(', ')
+    winners.reject! { |p| p.rounds < winners.first.rounds }
+    if winners.size > 1
+      say Utils.comma_list(winners) + ' have won equal affection!'
+    else
+      say "#{winners.first} has won the most affection!"
+    end
     #update_channel_stats
     #players.each { |p| update_user_stats(p, 0) }
     @plugin.remove_game(channel)
@@ -394,12 +426,24 @@ class LoveLetter
 
   def end_round
     @rounds.played += 1
+    # Sort out the winners.
+    a = []
+    winners = players.reject { |p| p.out }
+    winners.each { |p| a << "#{p} discards #{p.hand.first}" }
+    say Utils.comma_list(a) + '.'
+    winners.sort! { |x, y| y.hand.first.value <=> x.hand.first.value }
+    winners.reject! { |p| p.hand.first.value < winners.first.hand.first.value }
+    if winners.size > 1
+      say 'It\'s a tie between' + Utils.comma_list(winners) + '!'
+      winner = nil
+    else
+      say "#{winners.first} wins the round!"
+      winner = winners.first
+    end
     players.each do |p|
-      p.discard = p.hand = []
-      p.rounds += 1 unless p.out
-      say "#{p} wins the round!" unless p.out
-      winner = p
-      p.out = false
+      p.discard, p.hand = nil, []
+      p.moved = p.out = false
+      p.rounds += 1 if winners.include?(p)
     end
     if rounds.played == rounds.total
       end_game
@@ -469,10 +513,10 @@ class LoveLetter
     player.moved = true
     card = guard_guess = opponent = nil
     a.each do |e|
-      card = player.hand[e.to_i-1] if card.nil? and not e.to_i.zero?
-      card = get_card(e) if card.nil?
-      guard_guess = get_card(e) if guard_guess.nil? or guard_guess == card
-      opponent = get_player(e, player.user)
+      card = player.hand[e.to_i-1] unless card or e.to_i.zero?
+      card = card || get_card(e)
+      guard_guess = get_card(e) || guard_guess
+      opponent = opponent || get_player(e, player.user)
     end
     player.moved = if player.discard and player.discard.name == :guard
       do_guard(player, opponent, guard_guess)
@@ -552,15 +596,16 @@ class LoveLetter
 
   def show_turn
     return unless started
-    player= players.first
+    a, player= [], players.first
     string = "It's #{player}'s turn."
-    string << " Current discard: #{player.discard}" if player.discard
-    string << " Cards left: #{deck.size}"
+    players.each { |p| a << "#{p.user} - #{p.discard}" if p.discard }
+    string << ' -- Discard: ' + a.join(', ') if a.size > 0
+    string << " -- Cards left: #{deck.size}"
     say string
   end
 
   def transfer_management(player, a)
-    return if a.size.zero?
+    return if a.empty?
     unless player == manager
       notify player, "You can't transfer ownership. " +
                      "#{manager} manages this game."
@@ -741,17 +786,21 @@ class LoveLetterPlugin < Plugin
     end
   end
 
-  def create_game(m, plugin)
+  def create_game(m, p)
     if g = @games[m.channel]
       if m.source == g.manager.user
         m.reply "...you already started #{Title}."
       else
         m.reply "#{g.manager.user} already started #{Title}."
       end
-    else
-      rounds = 1
-      @games[m.channel] = LoveLetter.new(self, m.channel, m.source, rounds)
+      return
     end
+    rounds = p[:rounds].to_i
+    if rounds > 50 or rounds.zero?
+      m.reply 'That\'s not a good idea...'
+      return
+    end
+    @games[m.channel] = LoveLetter.new(self, m.channel, m.source, rounds)
   end
 
   def message(m)
@@ -786,10 +835,6 @@ class LoveLetterPlugin < Plugin
     when /^transfer( |\z)/
       g.transfer_management(player, a)
     end
-  end
-
-  def do_test(m, params)
-    m.reply LoveLetter.get_card("baron").class.to_s
   end
 
   # Called from within the game.
