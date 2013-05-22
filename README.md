@@ -15,8 +15,7 @@ Drop `loveletter.rb` in your rbot's plugin folder and run `!rescan` to reload yo
 [manual]
 
 ##TODO
- - Playtest
- - Add player stats.
+ - Playtest!
 
 [manual]: http://www.alderac.com/tempest/files/2012/09/Love_Letter_Rules_Final.pdf
 [rbot]: http://ruby-rbot.org/
