@@ -4,7 +4,7 @@
 # Author:: Jay Thomas <degradinglight@gmail.com>
 # Copyright:: (C) 2013 gfax
 # License:: GPL
-# Version:: 2013-05-22
+# Version:: 2013-05-23
 #
 
 class LoveLetter
@@ -154,6 +154,7 @@ class LoveLetter
     else
       say "#{player} joins #{Title}."
     end
+    player.hand << @deck.pop if started
     if @join_timer
       if players.size == 4
         @bot.timer.remove(@join_timer)
@@ -460,10 +461,10 @@ class LoveLetter
     winners.sort! { |x, y| y.hand.first.value <=> x.hand.first.value }
     winners.reject! { |p| p.hand.first.value < winners.first.hand.first.value }
     if winners.size > 1
-      say 'It\'s a tie between' + Utils.comma_list(winners) + '!'
+      string = 'It\'s a tie between' + Utils.comma_list(winners) + '!'
       winner = nil
     else
-      say "#{winners.first} wins the round!"
+      string = "#{winners.first} wins the round!"
       winner = winners.first
     end
     players.each do |p|
@@ -474,7 +475,7 @@ class LoveLetter
     if rounds.played == rounds.total
       end_game
     else
-      say "Starting round #{rounds.played + 1} of #{rounds.total}..."
+      say string + " Starting round #{rounds.played + 1} of #{rounds.total}..."
       do_round(winner)
     end
   end
@@ -629,7 +630,7 @@ class LoveLetter
       ds = p.discard ? p.discard.to_s : '(none)'
       a << us + ' - ' + ds
     end
-    string << 'Discard: ' + a.join(', ')
+    string << ' Discard: ' + a.join(', ')
     string << " -- Cards left: #{deck.size}"
     say string
   end
