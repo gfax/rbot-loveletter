@@ -487,13 +487,16 @@ class LoveLetter
       return nil
     when User
       players.each do |p|
+        next if p.out
         return p if p.user == user
       end
     when String
       players.each do |p|
+        next if p.out
         return p if p.user.irc_downcase == user.irc_downcase(channel.casemap)
       end
       players.each do |p|
+        next if p.out
         if p.user.irc_downcase =~ /^#{user.irc_downcase(channel.casemap)}/
           return p unless p.user.irc_downcase == source.downcase
         end
@@ -605,7 +608,10 @@ class LoveLetter
     return unless started
     a, player = [], players.first
     string = "It's #{player}'s turn."
-    players.each { |p| a << "#{p.user} - #{p.discard}" if p.discard }
+    players.each do |p|
+      next if p.out
+      a << "#{p.user} - #{p.discard}" if p.discard
+    end
     string << ' -- Discard: ' + a.join(', ') if a.size > 0
     string << " -- Cards left: #{deck.size}"
     say string
