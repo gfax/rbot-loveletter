@@ -172,6 +172,9 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
+    elsif opponent.out
+      notify player, "#{opponent.user} is already out of the round!"
+      return false
     end
     say "#{player} compares hands with #{opponent}..."
     if player.hand.first.value > opponent.hand.first.value
@@ -197,6 +200,10 @@ class LoveLetter
         return false
       end
     end
+    if opponent and opponent.out
+      say "#{opponent} is already out of the round!"
+      return
+    end
     player.discard = card
     player.hand.delete_at(player.hand.index { |e| e.name == card.name })
     say "#{player} plays #{card}."
@@ -204,7 +211,7 @@ class LoveLetter
     # the card may be discarded to no effect.
     handmaids = true
     players.each do |p|
-      next if p == player
+      next if p == player or p.out
       handmaids = false if p.discard.nil? or p.discard.name != :handmaid
       break if handmaids == false
     end
@@ -253,6 +260,9 @@ class LoveLetter
     elsif opponent.nil? or opponent == player
       notify player, 'Specify a target player.'
       return false
+    elsif opponent.out
+      notify player, "#{opponent.user} is already out of the round!"
+      return false
     elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
       return false
@@ -267,6 +277,9 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
+    elsif opponent.out
+      notify player, "#{opponent.user} is already out of the round!"
+      return false
     end
     say "#{player} swaps hands with #{opponent}."
     player.hand, opponent.hand = opponent.hand, player.hand
@@ -278,6 +291,9 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
+    elsif opponent.out
+      notify player, "#{opponent.user} is already out of the round!"
+      return false
     end
     notify player, "#{opponent} has: #{opponent.hand.first}"
     return true
@@ -286,6 +302,9 @@ class LoveLetter
   def do_prince(player, opponent)
     if opponent.nil?
       opponent = player
+    elsif opponent.out
+      notify player, "#{opponent.user} is already out of the round!"
+      return false
     elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
       return false
@@ -487,16 +506,13 @@ class LoveLetter
       return nil
     when User
       players.each do |p|
-        next if p.out
         return p if p.user == user
       end
     when String
       players.each do |p|
-        next if p.out
         return p if p.user.irc_downcase == user.irc_downcase(channel.casemap)
       end
       players.each do |p|
-        next if p.out
         if p.user.irc_downcase =~ /^#{user.irc_downcase(channel.casemap)}/
           return p unless p.user.irc_downcase == source.downcase
         end
@@ -609,10 +625,11 @@ class LoveLetter
     a, player = [], players.first
     string = "It's #{player}'s turn."
     players.each do |p|
-      next if p.out
-      a << "#{p.user} - #{p.discard}" if p.discard
+      us = p.out ? "#{p.user} (out)" : p.user.to_s
+      ds = p.discard ? p.discard.to_s : '(none)'
+      a << us + ' - ' + ds
     end
-    string << ' -- Discard: ' + a.join(', ') if a.size > 0
+    string << 'Discard: ' + a.join(', ')
     string << " -- Cards left: #{deck.size}"
     say string
   end
