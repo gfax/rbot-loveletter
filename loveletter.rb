@@ -18,9 +18,8 @@ class LoveLetter
       :value => 1,
       :quantity => 5,
       :keyword => /guard/,
-      :text => 'Name a non-Guard card and choose another player and ' +
-               'choose another player; If that player has that card, ' +
-               'he or she is our of the round.'
+      :text => 'Name a non-Guard card and choose another player; If ' +
+               'that player has that card, he or she is out of the round.'
     },
     :priest => {
       :value => 2,
@@ -340,7 +339,12 @@ class LoveLetter
       end_round
       return
     end
-    @players << @players.shift unless hold_place
+    if hold_place
+      # Show everyone their cards at the start of a new round.
+      players.each { |p| show_cards(p) unless p == players.first }
+    else
+      @players << @players.shift
+    end
     players.length.times do
       # Keep rotating until reaching a
       # player not out of the round.
@@ -577,14 +581,14 @@ class LoveLetter
   def show_help(player, a)
     if a.first.to_i.between?(1, player.hand.size)
       card = player.hand[a.first.to_i-1]
-    elsif a.first == /^cards?$/
+    elsif a.first =~ /^cards?$/
       say 'Cards: Princess (1), Countess (1), King (1), Prince ' +
           '(2), Handmaid (2), Baron (2), Priest (2), Guard (5).'
     else
       a.each { |e| card = get_card(e) if card.nil? }
-      return if card.nil
-      notify player, "#{card} - #{Cards[card.name][:text]}"
     end
+    return if card.nil?
+    notify player, "#{card} - #{Cards[card.name][:text]}"
   end
 
   def show_hand(p_array=players)
@@ -737,7 +741,7 @@ class LoveLetterPlugin < Plugin
       'There are 16 cards total in the deck: Princess (1), Countess ' +
       '(1), King (1), Prince (2), Handmaid (2), Baron (2), Priest ' +
       "(2), Guard (5). Use '#{p}help #{plugin} <card>' for " +
-      "card-specific information, (or simply use 'help card'," +
+      "card-specific information, (or simply use 'help card', " +
       "or 'help <card name>' in game for a quick reference)."
     when /command/
       "In-game commands: 'p <card name or number>' to pick/play " +
