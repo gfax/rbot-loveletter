@@ -391,9 +391,9 @@ class LoveLetter
   end
 
   def drop_player(dropper, a)
-    case player = a.first
-    when nil, 'me' then dropper
-    else get_player(a.first, dropper)
+    case a.first
+    when nil, 'me' then player = dropper
+    else player = get_player(a.first, dropper)
     end
     if player.nil?
       say "#{dropper}, there is no one playing named '#{a.first}'."
@@ -982,7 +982,8 @@ class LoveLetterPlugin < Plugin
       return
     end
     player = @games[m.channel].get_player(m.source.nick)
-    if g.manager == player or @bot.auth.irc_to_botuser(m.source).owner?
+    owner = @bot.auth.irc_to_botuser(m.source).owner?
+    if g.manager == player or owner or not started
       remove_game(m.channel)
       @bot.say m.replyto, "#{Title} stopped."
     else
