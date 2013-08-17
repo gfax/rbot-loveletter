@@ -4,7 +4,7 @@
 # Author:: Jay Thomas <degradinglight@gmail.com>
 # Copyright:: (C) 2013 gfax
 # License:: GPL
-# Version:: 2013-05-23
+# Version:: 2013-08-17
 #
 
 class LoveLetter
@@ -253,13 +253,13 @@ class LoveLetter
 
   def do_guard(player, opponent, guard_guess)
     opponent = players.last if players.size == 2
-    if guard_guess.nil?
+    if opponent.nil? or opponent == player
+      notify player, 'Specify a target player.'
+      return false
+    elsif guard_guess.nil?
       notify player, "Name a card you think #{opponent.user} has."
       return false
     elsif guard_guess.name == :guard
-      return false
-    elsif opponent.nil? or opponent == player
-      notify player, 'Specify a target player.'
       return false
     elsif opponent.out
       notify player, "#{opponent.user} is already out of the round!"
@@ -353,8 +353,7 @@ class LoveLetter
   end
 
   def do_turn(hold_place=false)
-    in_game = 0
-    players.each { |p| in_game += 1 unless p.out }
+    in_game = players.count { |p| p unless p.out }
     if in_game < 2 or deck.empty?
       end_round
       return
@@ -522,6 +521,11 @@ class LoveLetter
       get_player(user.to_s)
     end
     return nil
+  end
+
+  def next_turn(num=0)
+    return 0 if num >= players.length - 1
+    return num + 1
   end
 
   def notify(player, msg, opts={})
