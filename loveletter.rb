@@ -9,7 +9,9 @@
 
 class LoveLetter
 
-  Title = Irc.color(:red) + 'Love Letter' + NormalText
+  Color = Irc.color(:red)
+
+  Title = Color + 'Love Letter' + NormalText
 
   Rounds = Struct.new(:played, :total)
 
@@ -80,9 +82,9 @@ class LoveLetter
     end
 
     def to_s
-      Irc.color(:red) + '[' + NormalText +
+      Color + '[' + NormalText +
       name.to_s.capitalize + ' (' + value.to_s + ')' +
-      Irc.color(:red) + ']' + NormalText
+      Color + ']' + NormalText
     end
 
   end
@@ -90,7 +92,7 @@ class LoveLetter
 
   class Player
 
-    attr_accessor :user, :discard, :hand, :moved, :out, :rounds
+    attr_accessor :user, :discard, :hand, :moved, :rounds
 
     def initialize(user)
       @user = user
@@ -117,7 +119,7 @@ class LoveLetter
   end
 
   attr_reader :channel, :deck, :dropped, :join_timer,
-              :manager, :players, :rounds, :started
+              :manager, :ousted, :players, :rounds, :started
 
   def initialize(plugin, channel, user, rounds)
     @bot = plugin.bot
@@ -128,6 +130,7 @@ class LoveLetter
     @dropped = []     # players booted from game
     @join_timer = nil # timer for countdown
     @manager = nil    # player in control of game
+    @ousted = []      # players out of the round
     @players = []     # players currently in game
     @reserve = []     # card reserve for round end
     @rounds = Rounds.new(0, rounds)  # rounds in game
@@ -173,9 +176,6 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
-    elsif opponent.out
-      notify player, "#{opponent.user} is already out of the round!"
-      return false
     end
     say "#{player} compares hands with #{opponent}..."
     if player.hand.first.value > opponent.hand.first.value
@@ -201,9 +201,13 @@ class LoveLetter
         return false
       end
     end
-    if opponent and opponent.out
-      say "#{opponent} is already out of the round!"
-      return
+    if opponent
+      ousted.each do |p|
+        if opponent.name == p.name
+          say "#{opponent} is already out of the round!"
+          return
+        end
+      end
     end
     player.discard = card
     player.hand.delete_at(player.hand.index { |e| e.name == card.name })
@@ -212,7 +216,6 @@ class LoveLetter
     # the card may be discarded to no effect.
     handmaids = true
     players.each do |p|
-      next if p == player or p.out
       handmaids = false if p.discard.nil? or p.discard.name != :handmaid
       break if handmaids == false
     end
@@ -253,16 +256,13 @@ class LoveLetter
 
   def do_guard(player, opponent, guard_guess)
     opponent = players.last if players.size == 2
-    if opponent.nil? or opponent == player
-      notify player, 'Specify a target player.'
-      return false
-    elsif guard_guess.nil?
+    if guard_guess.nil?
       notify player, "Name a card you think #{opponent.user} has."
       return false
     elsif guard_guess.name == :guard
       return false
-    elsif opponent.out
-      notify player, "#{opponent.user} is already out of the round!"
+    elsif opponent.nil? or opponent == player
+      notify player, 'Specify a target player.'
       return false
     elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
@@ -278,9 +278,6 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
-    elsif opponent.out
-      notify player, "#{opponent.user} is already out of the round!"
-      return false
     end
     say "#{player} swaps hands with #{opponent}."
     player.hand, opponent.hand = opponent.hand, player.hand
@@ -292,9 +289,6 @@ class LoveLetter
     if opponent.nil?
       notify player, 'Specify another player.'
       return false
-    elsif opponent.out
-      notify player, "#{opponent.user} is already out of the round!"
-      return false
     end
     notify player, "#{opponent} has: #{opponent.hand.first}"
     return true
@@ -303,9 +297,6 @@ class LoveLetter
   def do_prince(player, opponent)
     if opponent.nil?
       opponent = player
-    elsif opponent.out
-      notify player, "#{opponent.user} is already out of the round!"
-      return false
     elsif opponent.discard and opponent.discard.name == :handmaid
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
       return false
@@ -353,8 +344,7 @@ class LoveLetter
   end
 
   def do_turn(hold_place=false)
-    in_game = players.count { |p| p unless p.out }
-    if in_game < 2 or deck.empty?
+    if players.size < 2 or deck.empty?
       end_round
       return
     end
@@ -364,12 +354,6 @@ class LoveLetter
     else
       @players << @players.shift
     end
-    players.length.times do
-      # Keep rotating until reaching a
-      # player not out of the round.
-      break unless players.first.out
-      @players << @players.shift
-    end
     player = players.first
     player.discard = nil
     players.last.moved = false
@@ -377,14 +361,14 @@ class LoveLetter
       if deck.empty? and not player.hand.empty?
         end_round
         return
-      elsif deck.size > 0
-        player.hand << @deck.pop
-      else
+      elsif deck.empty?
         player.hand << @reserve.pop
+      else
+        player.hand << @deck.pop
       end
     end
     if deck.size == 1
-      say "#{Irc.color(:red)}One card left in the deck.#{NormalText}"
+      say "#{Color}One card left in the deck.#{NormalText}"
     end
     say "#{player}, pick a card to discard."
     show_hand(player)
@@ -454,7 +438,7 @@ class LoveLetter
     @rounds.played += 1
     # Sort out the winners.
     a = []
-    winners = players.reject { |p| p.out }
+    winners = players.dup
     winners.each { |p| a << "#{p} discards #{p.hand.first}" }
     say Utils.comma_list(a) + '.'
     winners.sort! { |x, y| y.hand.first.value <=> x.hand.first.value }
@@ -468,7 +452,7 @@ class LoveLetter
     end
     players.each do |p|
       p.discard, p.hand = nil, []
-      p.moved = p.out = false
+      p.moved = false
       p.rounds += 1 if winners.include?(p)
     end
     if rounds.played == rounds.total
@@ -533,9 +517,8 @@ class LoveLetter
   end
 
   def oust_player(player)
-    player.out = true
     say "#{player} is out of the round! Discarding #{player.hand.first}."
-    player.discard = player.hand.first
+    player.discard, player.hand = nil, []
   end
 
   def processor(player, a)
@@ -629,11 +612,7 @@ class LoveLetter
     return unless started
     a, player = [], players.first
     string = "It's #{player}'s turn."
-    players.each do |p|
-      us = p.out ? "#{p.user} (out)" : p.user.to_s
-      ds = p.discard ? p.discard.to_s : '(none)'
-      a << us + ' - ' + ds
-    end
+    players.each { |p| a << p.user.to_s + ' - ' + p.discard.to_s }
     string << ' Discard: ' + a.join(', ')
     string << " -- Cards left: #{deck.size}"
     say string
