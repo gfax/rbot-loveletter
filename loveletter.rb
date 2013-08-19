@@ -4,7 +4,7 @@
 # Author:: Jay Thomas <degradinglight@gmail.com>
 # Copyright:: (C) 2013 gfax
 # License:: GPL
-# Version:: 2013-08-17
+# Version:: 2013-08-18
 #
 
 class LoveLetter
@@ -180,20 +180,22 @@ class LoveLetter
     say "#{player} compares hands with #{opponent}..."
     if player.hand.first.value > opponent.hand.first.value
       oust_player(opponent)
+      return false
     elsif player.hand.first.value == opponent.hand.first.value
       say "It's a draw."
     else
       oust_player(player)
+      return false
     end
     return true
   end
 
   def do_discard(player, card, opponent, guard_guess)
     if card.nil?
-      notify player, "Specify a card name or number."
+      notify player, 'Specify a card name or number.'
       return false
     elsif not player.has?(card)
-      notify player, "Specify one of your hand cards."
+      notify player, 'Specify one of your hand cards.'
       return false
     elsif player.has?(:king) or player.has?(:prince)
       if player.has?(:countess) and card.name != :countess
@@ -203,29 +205,22 @@ class LoveLetter
     end
     if opponent
       ousted.each do |p|
-        if opponent.name == p.name
+        if opponent.user == p.user
           say "#{opponent} is already out of the round!"
-          return
+          return false
         end
       end
     end
     player.discard = card
     player.hand.delete_at(player.hand.index { |e| e.name == card.name })
     say "#{player} plays #{card}."
-    # If all other players played Handmaid,
-    # the card may be discarded to no effect.
-    handmaids = true
-    players.each do |p|
-      handmaids = false if p.discard.nil? or p.discard.name != :handmaid
-      break if handmaids == false
-    end
     case card.name
     when :countess
       return true
     when :guard
-      if guard_guess and not handmaids
+      if guard_guess and not handmaids?
         return do_guard(player, opponent, guard_guess)
-      elsif not handmaids
+      elsif not handmaids?
         say 'Guess a card.'
       end
     when :handmaid
@@ -235,9 +230,9 @@ class LoveLetter
       return do_prince(player, opponent)
     when :princess
       oust_player(player)
-      return true
+      return false
     else
-      if handmaids == false
+      if not handmaids?
         opponent = players.last if players.size == 2
         if opponent
           return self.send("do_#{card.name}", player, opponent)
@@ -246,7 +241,7 @@ class LoveLetter
         end
       end
     end
-    if handmaids
+    if handmaids?
       say "#{player} discards to no effect."
       return true
     else
@@ -256,7 +251,10 @@ class LoveLetter
 
   def do_guard(player, opponent, guard_guess)
     opponent = players.last if players.size == 2
-    if guard_guess.nil?
+    if handmaids?
+      say "#{player} discards to no effect."
+      return true
+    elsif guard_guess.nil?
       notify player, "Name a card you think #{opponent.user} has."
       return false
     elsif guard_guess.name == :guard
@@ -270,12 +268,16 @@ class LoveLetter
     end
     say "#{player} suspects #{opponent} has the " +
         guard_guess.name.to_s.capitalize + '...'
-    oust_player(opponent) if opponent.has?(guard_guess)
-    return true
+    if opponent.has?(guard_guess)
+      oust_player(opponent)
+      return false
+    else
+      return true
+    end
   end
 
   def do_king(player, opponent)
-    if opponent.nil?
+    if opponent.nil? or opponent == player
       notify player, 'Specify another player.'
       return false
     end
@@ -286,8 +288,11 @@ class LoveLetter
   end
 
   def do_priest(player, opponent)
-    if opponent.nil?
+    if opponent.nil? or opponent == player
       notify player, 'Specify another player.'
+      return false
+    elsif opponent.discard and opponent.discard.name == :handmaid
+      notify player, "#{opponent} is protected by the Handmaid."
       return false
     end
     notify player, "#{opponent} has: #{opponent.hand.first}"
@@ -301,7 +306,7 @@ class LoveLetter
       notify player, "#{opponent.user} is protected by #{opponent.discard}."
       return false
     end
-    if opponent.discard.nil? or opponent.discard.name != :handmaid
+    if opponent.discard.nil? or opponent.hand.first.name != :handmaid
       opponent.discard = opponent.hand.first
     end
     say "#{opponent} discards #{opponent.hand.first}."
@@ -455,6 +460,8 @@ class LoveLetter
       p.moved = false
       p.rounds += 1 if winners.include?(p)
     end
+    @players |= @ousted
+    @ousted.clear
     if rounds.played == rounds.total
       end_game
     else
@@ -507,6 +514,16 @@ class LoveLetter
     return nil
   end
 
+  def handmaids?
+    # If all other players played Handmaid,
+    # the card may be discarded to no effect.
+    players.each do |p|
+      next if p == players.first
+      return false if p.discard.nil? or p.discard.name != :handmaid
+    end
+    return true
+  end
+
   def next_turn(num=0)
     return 0 if num >= players.length - 1
     return num + 1
@@ -519,6 +536,10 @@ class LoveLetter
   def oust_player(player)
     say "#{player} is out of the round! Discarding #{player.hand.first}."
     player.discard, player.hand = nil, []
+    hold_place = get_player(player) == players.first
+    @ousted << player
+    @players.delete(player)
+    do_turn(hold_place)
   end
 
   def processor(player, a)
@@ -535,6 +556,10 @@ class LoveLetter
     player.moved = if player.discard and player.discard.name == :guard
       do_guard(player, opponent, guard_guess)
     elsif player.discard
+      if handmaids?
+        say "#{opponent} discards to no effect."
+        return true
+      end
       self.send("do_#{player.discard.name}", player, opponent)
     else
       do_discard(player, card, opponent, guard_guess)
@@ -612,7 +637,7 @@ class LoveLetter
     return unless started
     a, player = [], players.first
     string = "It's #{player}'s turn."
-    players.each { |p| a << p.user.to_s + ' - ' + p.discard.to_s }
+    players.each { |p| a << "#{p.user} - #{p.discard || 'none'}" }
     string << ' Discard: ' + a.join(', ')
     string << " -- Cards left: #{deck.size}"
     say string
