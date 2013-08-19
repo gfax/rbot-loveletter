@@ -139,6 +139,12 @@ class LoveLetter
   end
 
   def add_player(user)
+    ousted.each do |p|
+      if user == p.user
+        say "You're out of this round, #{p}."
+        return
+      end
+    end
     if player = get_player(user)
       say "You're already in the game #{player}."
       return
@@ -586,6 +592,12 @@ class LoveLetter
     unless new_player
       new_player = old_player
       old_player = channel.get_user(replacer.user.nick)
+    end
+    ousted.each do |p|
+      if new_player == p.user
+        notify replacer, "#{new_player.nick} is already playing #{Title}."
+        return
+      end
     end
     if replacer.user == new_player
       notify replacer, "You're already playing, #{replacer.user}."
